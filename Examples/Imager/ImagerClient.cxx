@@ -23,6 +23,15 @@
 #include "igtlImageMessage.h"
 #include "igtlClientSocket.h"
 
+#include "opencv2/opencv.hpp"
+#include "vtkSmartPointer.h"
+#include "vtkImageData.h"
+#include "vtkObject.h"
+#include "vtkImageData.h"
+
+using namespace cv;
+using namespace std;
+
 int GetTestImage(igtl::ImageMessage::Pointer& msg, const char* dir, int i);
 void GetRandomTestMatrix(igtl::Matrix4x4& matrix);
 
@@ -31,15 +40,15 @@ int main(int argc, char* argv[])
   //------------------------------------------------------------
   // Parse Arguments
 
-  if (argc != 5) // check number of arguments
+  if (argc != 4)//5) // check number of arguments
     {
     // If not correct, print usage
     std::cerr << "Usage: " << argv[0] << " <hostname> <port> <fps> <imgdir>"    << std::endl;
     std::cerr << "    <hostname> : IP or host name"                    << std::endl;
     std::cerr << "    <port>     : Port # (18944 in Slicer default)"   << std::endl;
     std::cerr << "    <fps>      : Frequency (fps) to send coordinate" << std::endl;
-    std::cerr << "    <imgdir>   : file directory, where \"igtlTestImage[1-5].raw\" are placed." << std::endl;
-    std::cerr << "                 (usually, in the Examples/Imager/img directory.)" << std::endl;
+    /*std::cerr << "    <imgdir>   : file directory, where \"igtlTestImage[1-5].raw\" are placed." << std::endl;
+    std::cerr << "                 (usually, in the Examples/Imager/img directory.)" << std::endl;*/
     exit(0);
     }
 
@@ -47,7 +56,6 @@ int main(int argc, char* argv[])
   int    port     = atoi(argv[2]);
   double fps      = atof(argv[3]);
   int    interval = (int) (1000.0 / fps);
-  char*  filedir  = argv[4];
 
   //------------------------------------------------------------
   // Establish Connection
@@ -61,16 +69,57 @@ int main(int argc, char* argv[])
     exit(0);
     }
 
+  vtkSmartPointer<vtkImageData> Image;
+  VideoCapture Cap(1);
+  Mat Frame;
+
+  if (!Cap.isOpened())
+    {
+    cout<<"Could not initialize capturing...\n";
+    return -1;
+    }
+
+  namedWindow("frame",1);
+
   //------------------------------------------------------------
   // loop
-  for (int i = 0; i < 100; i ++)
+  for(;;)
     {
+    //cout << "next for loop run" << endl;
 
     //------------------------------------------------------------
-    // size parameters
-    int   size[]     = {256, 256, 1};       // image dimension
-    float spacing[]  = {1.0, 1.0, 5.0};     // spacing (mm/pixel)
-    int   svsize[]   = {256, 256, 1};       // sub-volume size
+    // Capture frame data
+    Cap >> Frame; // get a new frame from camera
+
+    //------------------------------------------------------------
+    // size parameters Image Video
+    int cols = Frame.cols;
+    int rows = Frame.rows;
+
+    double Spacing = 1;
+    double Width  = Spacing*cols;
+    double Height = Spacing*rows;
+
+    //------------------------------------------------------------
+    // Create a new IMAGE type
+    Image = vtkSmartPointer<vtkImageData>::New();
+    int numberOfComponents=1;
+    Image->SetDimensions(cols, rows, 1);
+    Image->SetExtent(0, cols-1, 0, rows-1, 0, 0 );
+    Image->SetSpacing(Spacing, Spacing, Spacing);
+    Image->SetOrigin(0.0, 0.0, 0.0);
+    Image->AllocateScalars(VTK_UNSIGNED_CHAR, numberOfComponents);
+
+    //------------------------------------------------------------
+    // Create a the raw data image
+    Mat CVImage(cols, rows, CV_8U);
+    cvtColor(Frame, CVImage, CV_BGR2GRAY);
+
+    //------------------------------------------------------------
+    // Size parameters Image Message
+    int   size[]     = {cols,rows,1}; //256, 256, 1};       // image dimension
+    float spacing[]  = {1.0, 1.0, 1.0};     // spacing (mm/pixel)
+    int   svsize[]   = {cols, rows, 1};//256, 256, 1};       // sub-volume size
     int   svoffset[] = {0, 0, 0};           // sub-volume offset
     int   scalarType = igtl::ImageMessage::TYPE_UINT8;// scalar type
 
@@ -86,7 +135,15 @@ int main(int argc, char* argv[])
 
     //------------------------------------------------------------
     // Set image data (See GetTestImage() bellow for the details)
-    GetTestImage(imgMsg, filedir, i % 5);
+    //GetTestImage(imgMsg, filedir, i % 5);
+    if (Image && imgMsg)
+    {
+        int cols = Frame.cols;
+        int rows = Frame.rows;
+        memcpy(imgMsg->GetScalarPointer(), CVImage.data, cols*rows);
+        memcpy(Image->GetScalarPointer(), CVImage.data, cols*rows);//*3);
+        //size_t b = fread(imgMsg->GetScalarPointer(), 1, cols*rows, fp);
+    }
 
     //------------------------------------------------------------
     // Get random orientation matrix and set it.
@@ -99,7 +156,10 @@ int main(int argc, char* argv[])
     imgMsg->Pack();
     socket->Send(imgMsg->GetPackPointer(), imgMsg->GetPackSize());
 
-    igtl::Sleep(interval); // wait
+    //igtl::Sleep(interval); // wait
+
+    imshow("frame", Frame);
+    if(waitKey(30) >= 0) break;
 
     }
 
@@ -107,17 +167,18 @@ int main(int argc, char* argv[])
   // Close connection
   socket->CloseSocket();
 
+  return 0;
 }
 
 
 //------------------------------------------------------------
 // Function to read test image data
-int GetTestImage(igtl::ImageMessage::Pointer& msg, const char* dir, int i)
+/*int GetTestImage(igtl::ImageMessage::Pointer& msg, const char* dir, int i)
 {
 
   //------------------------------------------------------------
   // Check if image index is in the range
-  if (i < 0 || i >= 5) 
+  if (i < 0 || i >= 5)
     {
     std::cerr << "Image index is invalid." << std::endl;
     return 0;
@@ -145,7 +206,7 @@ int GetTestImage(igtl::ImageMessage::Pointer& msg, const char* dir, int i)
   std::cerr << "done." << std::endl;
 
   return 1;
-}
+}*/
 
 //------------------------------------------------------------
 // Function to generate random matrix.
@@ -182,7 +243,7 @@ void GetRandomTestMatrix(igtl::Matrix4x4& matrix)
   matrix[0][1] = 0.0;  matrix[1][1] = -1.0;  matrix[2][1] = 0.0; matrix[3][1] = 0.0;
   matrix[0][2] = 0.0;  matrix[1][2] = 0.0;  matrix[2][2] = 1.0; matrix[3][2] = 0.0;
   matrix[0][3] = 0.0;  matrix[1][3] = 0.0;  matrix[2][3] = 0.0; matrix[3][3] = 1.0;
-  
-  igtl::PrintMatrix(matrix);
+
+  //igtl::PrintMatrix(matrix);
 }
 
